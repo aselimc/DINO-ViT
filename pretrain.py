@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import argparse
+from requests import get
 import torch
 
 import seaborn as sns
@@ -27,7 +28,7 @@ def parse_arguments():
     parser.add_argument('--data_folder', type=str, help="folder containing the data (crops)")
     parser.add_argument('--output-root', type=str, default='results')
     parser.add_argument('--epochs', type=int, default=10, help='number of epochs')
-    parser.add_argument('--bs', type=int, default=128, help='batch_size')
+    parser.add_argument('--bs', type=int, default=64, help='batch_size')
     parser.add_argument('--dataset-size', type=int, default=60000)
     parser.add_argument('--schedule', type=str, default="cosine")
     parser.add_argument('--snapshot-freq', type=int, default=1, help='how often to save models')
@@ -78,12 +79,15 @@ def main(args):
     student, teacher = student.cuda(), teacher.cuda()    
     
     # there is no backpropagation through the teacher, so no need for gradients
-    raise NotImplementedError("TODO: load weight initialization")
+    with torch.no_grad():
+        teacher = teacher
+    # raise NotImplementedError("TODO: load weight initialization")
 
     # ============ preparing data ... ============
     train_transform = TrainAugmentation(args.global_crops_scale, args.local_crops_scale, args.local_crops_number)
     val_transform = ValAugmentation(args.local_crops_scale, args.local_crops_number)
     data_root = args.data_folder
+    data_root = "/project/dl2022s/canakcia/cv_exercise/dataset/crops/images/256"
     train_data = DataReaderPlainImg(os.path.join(data_root, "train"), transform=train_transform)
     if args.dataset_size is not None:
         train_data = torch.utils.data.Subset(train_data, range(args.dataset_size))
@@ -94,8 +98,10 @@ def main(args):
                                              pin_memory=True, drop_last=True)
     
     # ============ preparing loss ... ============
-    raise NotImplementedError("TODO: load weight initialization")
-
+    #raise NotImplementedError("TODO: load weight initialization")
+    dino_loss = DINOLoss(args.out_dim, args.local_crops_number+2, args.warmup_teacher_temp,
+                         args.teacher_temp, args.warmup_teacher_temp_epochs,
+                         args.epochs)
     # ============ preparing optimizer ... ============
     params_groups = get_params_groups(student)
     optimizer = torch.optim.AdamW(params_groups)
@@ -122,9 +128,9 @@ def main(args):
     log = SummaryWriter(args.logs_folder)
     expdata = "  \n".join(["{} = {}".format(k, v) for k, v in vars(args).items()])
     log.add_text("experiment_details", expdata, 0)
-    
-    validate(val_loader, teacher, student, dino_loss, -1, args, log=log)
-    
+    with torch.no_grad():
+        validate(val_loader, teacher, student, dino_loss, -1, args, log=log)
+
     for epoch in range(args.epochs):
         print("Epoch {}".format(epoch))
         log.add_scalar("learning_rate", optimizer.param_groups[0]['lr'], epoch)
@@ -139,7 +145,8 @@ def main(args):
             'optimizer': optimizer.state_dict(),
         }
         torch.save(state, os.path.join(args.model_folder, 'ckpt_epoch{}.pth'.format(epoch)))
-        validate(val_loader, teacher, student, dino_loss, epoch, args, log=log)
+        with torch.no_grad():
+            validate(val_loader, teacher, student, dino_loss, epoch, args, log=log)
 
 def train(data_loader, t_model, s_model, criterion, optimizer, lr_schedule, wd_schedule, momentum_schedule, epoch, fp16_scaler, log=None):
     print("Training")
@@ -158,7 +165,12 @@ def train(data_loader, t_model, s_model, criterion, optimizer, lr_schedule, wd_s
         images = [im.cuda(non_blocking=True) for im in images]
         # teacher and student forward passes + compute dino loss
         with torch.cuda.amp.autocast(fp16_scaler is not None):
-            raise NotImplementedError("TODO: load weight initialization")
+            images = [im.cuda(non_blocking=True) for im in images]
+            with torch.no_grad():
+                teacher_output = t_model(images[:2])  
+            student_output = s_model(images)
+            loss = criterion(student_output, teacher_output, epoch)
+            #raise NotImplementedError("TODO: load weight initialization")
         # student update
         optimizer.zero_grad()
         param_norms = None
@@ -167,14 +179,18 @@ def train(data_loader, t_model, s_model, criterion, optimizer, lr_schedule, wd_s
         fp16_scaler.update()
         # EMA update for the teacher
         with torch.no_grad():
-            raise NotImplementedError("TODO: load weight initialization")
+           momentum = momentum_schedule[it]
+           for param_q, param_k in zip(s_model.parameters(), t_model.parameters()):
+                        param_k.data.mul_(momentum).add_((1 - momentum) * param_q.detach().data)
+           # raise NotImplementedError("TODO: load weight initialization")
         loss_meter.add(loss.item())
-        if iteration % 100 == 0:
+        if iteration % 50 == 0:
             if "PBS_JOBID" not in os.environ:
                 print("Avg loss = {}".format(loss_meter.mean))
-            log.add_scalar("training_loss", loss_meter.mean, global_step)
-            log.add_scalar("epoch_progress", iteration/(len(data_loader.dataset)/data_loader.batch_size), global_step)
-            loss_meter.reset()
+            if iteration % 100 ==0:
+                log.add_scalar("training_loss", loss_meter.mean, global_step)
+                log.add_scalar("epoch_progress", iteration/(len(data_loader.dataset)/data_loader.batch_size), global_step)
+                loss_meter.reset()
         global_step += 1
 
 def validate(loader, t_model, s_model, criterion, epoch, args, log=None):
@@ -192,7 +208,8 @@ def validate(loader, t_model, s_model, criterion, epoch, args, log=None):
         feature_maps[2*idx:2*(idx+1), :] = t_model.backbone(torch.cat(images[:2],dim=0))
     print("Mean validation loss = {}".format(loss_meter.mean))
     log.add_scalar("validation_loss", loss_meter.mean, global_step)
-    raise NotImplementedError("TODO: load weight initialization")
+    feature_maps_embedded = TSNE().fit_transform(feature_maps)
+    # raise NotImplementedError("TODO: load weight initialization")
     plt.figure(figsize=(16,10))
     sns.scatterplot(
         x=feature_maps_embedded[:,0], 
@@ -228,8 +245,11 @@ class DINOLoss(torch.nn.Module):
         student_out = student_out.chunk(self.ncrops)
 
         # teacher centering and sharpening
-        raise NotImplementedError("TODO: load weight initialization")
-
+        # raise NotImplementedError("TODO: load weight initialization")
+        temp_schedule = self.teacher_temp_schedule[epoch]
+        teacher_out = torch.nn.functional.softmax((teacher_output-self.center.to("cuda"))/
+                                                     temp_schedule,
+                                                     dim=-1)
         total_loss = 0
         n_loss_terms = 0
         for iq, q in enumerate(teacher_out):
@@ -250,8 +270,8 @@ class DINOLoss(torch.nn.Module):
         """
         Update center used for teacher output.
         """
-        raise NotImplementedError("TODO: load weight initialization")
-
+        # raise NotImplementedError("TODO: load weight initialization")
+        batch_center = torch.sum(teacher_output, dim= 0, keepdim=True) / len(teacher_output)
         # ema update
         self.center = self.center * self.center_momentum + batch_center * (1 - self.center_momentum)
 
