@@ -4,6 +4,7 @@ import numpy as np
 import argparse
 import torch
 import time
+from pprint import pprint
 from torchvision.transforms import ToTensor
 from utils.meters import AverageValueMeter
 from utils.weights import load_from_weights
@@ -19,15 +20,15 @@ global_step = 0
 
 def parse_arguments():
     parser = argparse.ArgumentParser()
-    parser.add_argument('data_folder', type=str, help="folder containing the data")
-    parser.add_argument('--pretrained_model_path', type=str, default='')
+    parser.add_argument('--data_folder', default="dataset/COCO_mini5class_medium", type=str, help="folder containing the data")
+    parser.add_argument('--pretrained_model_path', default="binary_segmentation.pth", type=str)
     parser.add_argument('--output-root', type=str, default='results')
     parser.add_argument('--lr', type=float, default=0.001, help='learning rate')
     parser.add_argument('--bs', type=int, default=32, help='batch_size')
     parser.add_argument('--att', type=str, default='sdotprod', help='Type of attention. Choose from {additive, cosine, dotprod, sdotprod}')
     parser.add_argument('--size', type=int, default=256, help='image size')
     parser.add_argument('--snapshot-freq', type=int, default=5, help='how often to save models')
-    parser.add_argument('--exp-suffix', type=str, default="")
+    parser.add_argument('--exp-suffix', default="binary_weights", type=str)
     args = parser.parse_args()
 
     hparam_keys = ["lr", "bs", "att"]
@@ -50,12 +51,17 @@ def main(args):
     # Logging to the file and stdout
     logger = get_logger(args.output_folder, args.exp_name)
     img_size = (args.size, args.size)
+    
 
     # model
     pretrained_model = ResNet18Backbone(False)
     # TODO: Complete the documentation for AttSegmentator model
-    raise NotImplementedError("TODO: Build model AttSegmentator model")
-    model = None
+    # raise NotImplementedError("TODO: Build model AttSegmentator model")
+    encoder_model = ResNet18Backbone(pretrained=False).cuda()
+    num_classes = 5
+    model = AttSegmentator(num_classes=num_classes, encoder=encoder_model.features, img_size=img_size).cuda()
+    
+    encoder_model = load_from_weights(model, args.pretrained_model_path)
 
     if os.path.isfile(args.pretrained_model_path):
         model = load_from_weights(model, args.pretrained_model_path, logger)
@@ -90,10 +96,10 @@ def main(args):
 
 
     # TODO: loss
-    criterion = None
+    criterion = torch.nn.CrossEntropyLoss()
     # TODO: SGD optimizer (see pretraining)
-    optimizer = None
-    raise NotImplementedError("TODO: loss function and SGD optimizer")
+    optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=1e-4)
+    # raise NotImplementedError("TODO: loss function and SGD optimizer")
 
     log = SummaryWriter(args.logs_folder)
     expdata = "  \n".join(["{} = {}".format(k, v) for k, v in vars(args).items()])
@@ -251,6 +257,6 @@ if __name__ == '__main__':
     python dt_single_ss.py datasets/COCO_mini5class_medium --pretrained_model_path models/dino_weights.pth --exp-suffix dino_weights --exp-suffix dino_weights
     """
     args = parse_arguments()
-    # pprint(vars(args))
-    # print()
+    pprint(vars(args))
+    print()
     main(args)

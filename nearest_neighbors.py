@@ -1,18 +1,22 @@
+from calendar import c
 import os
 import random
 import argparse
+from statistics import mode
 import torch
 from pprint import pprint
 from torchvision.transforms import *
-from utils import check_dir
-from models.pretraining_backbone import ResNet18Backbone
+from utils import check_dir, get_logger
+from utils.weights import load_from_weights
+from models.pretraining_backbone import ResNet18Backbone, DINOHead
 from data.pretraining import DataReaderPlainImg
-
+from torch.utils.data import DataLoader
+from pretrain import MultiCropWrapper
 
 def parse_arguments():
     parser = argparse.ArgumentParser()
     parser.add_argument('--weights-init', type=str,
-                        default="")
+                        default="results/lr0.0005_bs64__local/models/ckpt_epoch9.pth")
     parser.add_argument("--size", type=int, default=256, help="size of the images to feed the network")
     parser.add_argument('--output-root', type=str, default='results')
     args = parser.parse_args()
@@ -27,23 +31,36 @@ def parse_arguments():
 
 def main(args):
     # model
-    raise NotImplementedError("TODO: build model and load weights snapshot")
-
+    #raise NotImplementedError("TODO: build model and load weights snapshot")
+    model = ResNet18Backbone(pretrained=True)
+    model = MultiCropWrapper(model, DINOHead(
+        512, 128, norm_last_layer=True,
+    ))
+    model = load_from_weights(model, args.weights_init)
+    model = model.cuda()
+    model.eval()
     # dataset
     val_transform = Compose([Resize(args.size), CenterCrop((args.size, args.size)), ToTensor()])
-    raise NotImplementedError("Load the validation dataset (crops), use the transform above.")
-
+    #raise NotImplementedError("Load the validation dataset (crops), use the transform above.")
+    val_data = DataReaderPlainImg("dataset/crops/images/256/val", transform=val_transform)
+    val_loader = DataLoader(val_data, shuffle=False, num_workers=2, pin_memory=True, drop_last=True)
     # choose/sample which images you want to compute the NNs of.
     # You can try different ones and pick the most interesting ones.
-    query_indices = []
+    query_indices = [44, 45, 46, 47, 48]
     nns = []
+    logger = get_logger(args.logs_folder, "nearest_neighnors")
     for idx, img in enumerate(val_loader):
         if idx not in query_indices:
             continue
         print("Computing NNs for sample {}".format(idx))
-        closest_idx, closest_dist = find_nn(model, img, val_loader, 5)
-        raise NotImplementedError("TODO: retrieve the original NN images, save them and log the results.")
-
+        closest_idx, closest_dist = find_nn(model, img.to(torch.device(0)), val_loader, 5)
+        c_idx = [i.item() for i in closest_idx]
+        c_dist = [round(i.item(),6) for i in closest_dist]
+        logger.info(f"The index of closest NNs for the {idx}th image are {c_idx}, and respective distances are {c_dist}")
+        #raise NotImplementedError("TODO: retrieve the original NN images, save them and log the results.")
+        for index,image in enumerate(val_loader):
+            if index in closest_idx:
+                nns.append(image)
 
 def find_nn(model, query_img, loader, k):
     """
@@ -57,8 +74,20 @@ def find_nn(model, query_img, loader, k):
         closest_idx: the indices of the NNs in the dataset, for retrieving the images
         closest_dist: the L2 distance of each NN to the features of the query image
     """
-    raise NotImplementedError("TODO: nearest neighbors retrieval")
-    # return closest_idx, closest_dist
+    with torch.no_grad():
+        dist = []
+        query_out = model(query_img)
+        for data in loader:
+            data = data.to(torch.device(0))
+            prediction = model(data)
+            distance = torch.linalg.norm(query_out-prediction, ord=2)
+            dist.append(distance.item())
+        dist = torch.Tensor(dist)
+        closest_idx = torch.argsort(dist)[1:k+1]
+        closest_dist = dist[closest_idx]
+
+    # raise NotImplementedError("TODO: nearest neighbors retrieval")
+    return closest_idx, closest_dist
 
 
 if __name__ == '__main__':

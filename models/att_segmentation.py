@@ -21,7 +21,7 @@ class AttSegmentator(nn.Module):
         low_level_dim = 64
         self.num_classes = num_classes
 
-        raise NotImplementedError("TODO: Make sure the number of classes is correct for this network")
+        # raise NotImplementedError("TODO: Make sure the number of classes is correct for this network")
     
         self.class_encoder = nn.Linear(num_classes, 512)
 
@@ -42,17 +42,22 @@ class AttSegmentator(nn.Module):
         class_vec = self.class_encoder(v_class)
         # class_vec: [1, 512]
 
-        raise NotImplementedError("TODO: Implement the attention-based segmentation network")
+        # raise NotImplementedError("TODO: Implement the attention-based segmentation network")
         # Write the forward pass of the model.
         # Base the model on the segmentation model and add the attention layer.
         # Be aware of the dimentions.
-
+        shape = enc_feat.shape
+        enc_feat = enc_feat.permute(0, 2, 3, 1).contiguous()
+        enc_feat = enc_feat.view(shape[0], -1, shape[1])
+        
+        enc_feat, attention = self.attention_enc(enc_feat, class_vec)
+        enc_feat = enc_feat.view(shape)
         # ENCODER ATTENTION
 
         segmentation = self.decoder(enc_feat, low_level_feat)
 
         if out_att:
-            return segmentation, attention
+            return segmentation, list(attention.view(-1, 1, 8, 8))
         return segmentation
 
 if __name__ == "__main__":

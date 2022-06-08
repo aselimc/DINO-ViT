@@ -47,10 +47,9 @@ def trunc_normal_(tensor, mean=0., std=1., a=-2., b=2.):
 class ResNet18Backbone(nn.Module):
     def __init__(self, pretrained):
         super().__init__()
-        self.features = IntermediateLayerGetter(resnet18(pretrained=pretrained), {"avgpool": "out"}).cuda()
-
+        self.features = IntermediateLayerGetter(resnet18(pretrained=pretrained), {"avgpool": "out"}).to(torch.device(0))
     def forward(self, x):
-        x = self.features(x)["out"]
+        x = self.features(x)['out']
         x = torch.flatten(x, 1)
         return x
 

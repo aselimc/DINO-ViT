@@ -19,7 +19,7 @@ global_step = 0
 
 def parse_arguments():
     parser = argparse.ArgumentParser()
-    parser.add_argument('data_folder', type=str, help="folder containing the data")
+    parser.add_argument('--data_folder', type=str, help="folder containing the data")
     parser.add_argument('--pretrained_model_path', type=str, default='')
     parser.add_argument('--output-root', type=str, default='results')
     parser.add_argument('--lr', type=float, default=0.001, help='learning rate')

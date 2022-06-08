@@ -67,20 +67,20 @@ def main(args):
     # ============ building student and teacher networks ... ============
     teacher = ResNet18Backbone(pretrained=True)
     student = ResNet18Backbone(pretrained=True)
-        
+
     # multi-crop wrapper handles forward with inputs of different resolutions
     student = MultiCropWrapper(student, DINOHead(
         512, 128, norm_last_layer=True,
     ))
     teacher = MultiCropWrapper(teacher, DINOHead(
         512, 128))
-    
+
     # move networks to gpu
     student, teacher = student.cuda(), teacher.cuda()    
     
     # there is no backpropagation through the teacher, so no need for gradients
-    with torch.no_grad():
-        teacher = teacher
+    for param in teacher.parameters():
+        param.requires_grad = False
     # raise NotImplementedError("TODO: load weight initialization")
 
     # ============ preparing data ... ============
@@ -101,7 +101,8 @@ def main(args):
     #raise NotImplementedError("TODO: load weight initialization")
     dino_loss = DINOLoss(args.out_dim, args.local_crops_number+2, args.warmup_teacher_temp,
                          args.teacher_temp, args.warmup_teacher_temp_epochs,
-                         args.epochs)
+                         args.epochs).cuda()
+    
     # ============ preparing optimizer ... ============
     params_groups = get_params_groups(student)
     optimizer = torch.optim.AdamW(params_groups)
@@ -130,7 +131,6 @@ def main(args):
     log.add_text("experiment_details", expdata, 0)
     with torch.no_grad():
         validate(val_loader, teacher, student, dino_loss, -1, args, log=log)
-
     for epoch in range(args.epochs):
         print("Epoch {}".format(epoch))
         log.add_scalar("learning_rate", optimizer.param_groups[0]['lr'], epoch)
@@ -166,10 +166,9 @@ def train(data_loader, t_model, s_model, criterion, optimizer, lr_schedule, wd_s
         # teacher and student forward passes + compute dino loss
         with torch.cuda.amp.autocast(fp16_scaler is not None):
             images = [im.cuda(non_blocking=True) for im in images]
-            with torch.no_grad():
-                teacher_output = t_model(images[:2])  
+            teacher_output = t_model(images[:2])  
             student_output = s_model(images)
-            loss = criterion(student_output, teacher_output, epoch)
+            loss = criterion(student_output, teacher_output, epoch, train=True)
             #raise NotImplementedError("TODO: load weight initialization")
         # student update
         optimizer.zero_grad()
@@ -180,8 +179,9 @@ def train(data_loader, t_model, s_model, criterion, optimizer, lr_schedule, wd_s
         # EMA update for the teacher
         with torch.no_grad():
            momentum = momentum_schedule[it]
-           for param_q, param_k in zip(s_model.parameters(), t_model.parameters()):
-                        param_k.data.mul_(momentum).add_((1 - momentum) * param_q.detach().data)
+           for s_param, t_param in zip(s_model.parameters(), t_model.parameters()):
+                t_param.data.mul_(momentum).add_((1 - momentum) * s_param.detach().data)
+            
            # raise NotImplementedError("TODO: load weight initialization")
         loss_meter.add(loss.item())
         if iteration % 50 == 0:
@@ -208,7 +208,7 @@ def validate(loader, t_model, s_model, criterion, epoch, args, log=None):
         feature_maps[2*idx:2*(idx+1), :] = t_model.backbone(torch.cat(images[:2],dim=0))
     print("Mean validation loss = {}".format(loss_meter.mean))
     log.add_scalar("validation_loss", loss_meter.mean, global_step)
-    feature_maps_embedded = TSNE().fit_transform(feature_maps)
+    feature_maps_embedded = TSNE(init='random', learning_rate='auto').fit_transform(feature_maps)
     # raise NotImplementedError("TODO: load weight initialization")
     plt.figure(figsize=(16,10))
     sns.scatterplot(
@@ -247,9 +247,9 @@ class DINOLoss(torch.nn.Module):
         # teacher centering and sharpening
         # raise NotImplementedError("TODO: load weight initialization")
         temp_schedule = self.teacher_temp_schedule[epoch]
-        teacher_out = torch.nn.functional.softmax((teacher_output-self.center.to("cuda"))/
-                                                     temp_schedule,
+        teacher_out = torch.nn.functional.softmax((teacher_output-self.center)/temp_schedule,
                                                      dim=-1)
+        teacher_out = teacher_out.detach().chunk(2)
         total_loss = 0
         n_loss_terms = 0
         for iq, q in enumerate(teacher_out):
