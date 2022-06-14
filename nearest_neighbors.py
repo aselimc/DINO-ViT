@@ -1,8 +1,6 @@
-from calendar import c
 import os
 import random
 import argparse
-from statistics import mode
 import torch
 from pprint import pprint
 from torchvision.transforms import *
@@ -46,8 +44,9 @@ def main(args):
     val_loader = DataLoader(val_data, shuffle=False, num_workers=2, pin_memory=True, drop_last=True)
     # choose/sample which images you want to compute the NNs of.
     # You can try different ones and pick the most interesting ones.
-    query_indices = [44, 45, 46, 47, 48]
+    query_indices = [12, 22, 61, 85, 98]
     nns = []
+    nns_big = []
     logger = get_logger(args.logs_folder, "nearest_neighnors")
     for idx, img in enumerate(val_loader):
         if idx not in query_indices:
@@ -58,9 +57,16 @@ def main(args):
         c_dist = [round(i.item(),6) for i in closest_dist]
         logger.info(f"The index of closest NNs for the {idx}th image are {c_idx}, and respective distances are {c_dist}")
         #raise NotImplementedError("TODO: retrieve the original NN images, save them and log the results.")
-        for index,image in enumerate(val_loader):
-            if index in closest_idx:
-                nns.append(image)
+        nns = [val_data[i] for i in c_idx]
+        concatenated = torch.cat(nns, 2)
+        # functional.to_pil_image(concatenated).save(f"results/nearest_neighbors/nn_{idx}.png")
+        nns_big.append(concatenated)
+        nns = []
+    all = torch.cat(nns_big, 1)
+    functional.to_pil_image(all).save(f"results/nearest_neighbors/all.png")
+
+
+
 
 def find_nn(model, query_img, loader, k):
     """
@@ -83,7 +89,8 @@ def find_nn(model, query_img, loader, k):
             distance = torch.linalg.norm(query_out-prediction, ord=2)
             dist.append(distance.item())
         dist = torch.Tensor(dist)
-        closest_idx = torch.argsort(dist)[1:k+1]
+        # First one being the image itself
+        closest_idx = torch.argsort(dist)[:k+1]
         closest_dist = dist[closest_idx]
 
     # raise NotImplementedError("TODO: nearest neighbors retrieval")

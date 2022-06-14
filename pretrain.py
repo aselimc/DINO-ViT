@@ -99,6 +99,7 @@ def main(args):
     
     # ============ preparing loss ... ============
     #raise NotImplementedError("TODO: load weight initialization")
+    # Num. of crops = Global (2) + Local
     dino_loss = DINOLoss(args.out_dim, args.local_crops_number+2, args.warmup_teacher_temp,
                          args.teacher_temp, args.warmup_teacher_temp_epochs,
                          args.epochs).cuda()
@@ -184,10 +185,9 @@ def train(data_loader, t_model, s_model, criterion, optimizer, lr_schedule, wd_s
             
            # raise NotImplementedError("TODO: load weight initialization")
         loss_meter.add(loss.item())
-        if iteration % 50 == 0:
+        if iteration % 100 == 0:
             if "PBS_JOBID" not in os.environ:
                 print("Avg loss = {}".format(loss_meter.mean))
-            if iteration % 100 ==0:
                 log.add_scalar("training_loss", loss_meter.mean, global_step)
                 log.add_scalar("epoch_progress", iteration/(len(data_loader.dataset)/data_loader.batch_size), global_step)
                 loss_meter.reset()
@@ -208,7 +208,7 @@ def validate(loader, t_model, s_model, criterion, epoch, args, log=None):
         feature_maps[2*idx:2*(idx+1), :] = t_model.backbone(torch.cat(images[:2],dim=0))
     print("Mean validation loss = {}".format(loss_meter.mean))
     log.add_scalar("validation_loss", loss_meter.mean, global_step)
-    feature_maps_embedded = TSNE(init='random', learning_rate='auto').fit_transform(feature_maps)
+    feature_maps_embedded = TSNE().fit_transform(feature_maps)
     # raise NotImplementedError("TODO: load weight initialization")
     plt.figure(figsize=(16,10))
     sns.scatterplot(
@@ -218,7 +218,7 @@ def validate(loader, t_model, s_model, criterion, epoch, args, log=None):
         legend="full",
         alpha=0.3
     )
-    plt.savefig(os.path.join(args.model_folder, 't_sne_epoch{}.eps'.format(epoch)))
+    plt.savefig(os.path.join(args.model_folder, 't_sne_epoch{}.svg'.format(epoch)))
 
 class DINOLoss(torch.nn.Module):
     def __init__(self, out_dim, ncrops, warmup_teacher_temp, teacher_temp,
@@ -246,8 +246,8 @@ class DINOLoss(torch.nn.Module):
 
         # teacher centering and sharpening
         # raise NotImplementedError("TODO: load weight initialization")
-        temp_schedule = self.teacher_temp_schedule[epoch]
-        teacher_out = torch.nn.functional.softmax((teacher_output-self.center)/temp_schedule,
+        tpt = self.teacher_temp_schedule[epoch]
+        teacher_out = torch.nn.functional.softmax((teacher_output-self.center)/tpt,
                                                      dim=-1)
         teacher_out = teacher_out.detach().chunk(2)
         total_loss = 0
