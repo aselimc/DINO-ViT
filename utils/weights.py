@@ -17,14 +17,14 @@ def load_from_weights(model, weights, logger=None):
     model_dict = model.state_dict()
     
     # Change the names of the keys
-    loaded_dict = {k.replace("module.", "").replace("backbone.", "").replace("features.", ""): v for k, v in ckpt.items()}
+    loaded_dict = {k.replace("module.", "").replace("backbone.", "").replace("features.", "").replace("low_feat.", ""): v for k, v in ckpt.items()}
 
     # Look in the models dicts the keys that match
     pretrained_dict = {}
     weights_ignored = []
     weights_loaded = []
     for k, v in model_dict.items():
-        k_loaded = k.replace("module.", "").replace("backbone.", "").replace("features.", "")
+        k_loaded = k.replace("module.", "").replace("backbone.", "").replace("features.", "").replace("low_feat.", "")
         if k_loaded in loaded_dict.keys():
             match_size = (v.shape==loaded_dict[k_loaded].shape)
             if match_size:
