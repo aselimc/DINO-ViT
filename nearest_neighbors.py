@@ -47,7 +47,7 @@ def main(args):
     query_indices = [12, 22, 61, 85, 98]
     nns = []
     nns_big = []
-    logger = get_logger(args.logs_folder, "nearest_neighnors")
+    logger = get_logger(args.logs_folder, "nearest_neighbors")
     for idx, img in enumerate(val_loader):
         if idx not in query_indices:
             continue
