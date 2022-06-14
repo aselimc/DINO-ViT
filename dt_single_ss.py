@@ -54,16 +54,14 @@ def main(args):
     
 
     # model
-    pretrained_model = ResNet18Backbone(False)
     # TODO: Complete the documentation for AttSegmentator model
     # raise NotImplementedError("TODO: Build model AttSegmentator model")
-    encoder_model = ResNet18Backbone(pretrained=False).cuda()
+    model = ResNet18Backbone(pretrained=True)
     num_classes = 5
-    model = AttSegmentator(num_classes=num_classes, encoder=encoder_model.features, img_size=img_size).cuda()
+    model = AttSegmentator(num_classes=num_classes, encoder=model.features, img_size=img_size).cuda()
     
-    encoder_model = load_from_weights(model, args.pretrained_model_path)
-
     if os.path.isfile(args.pretrained_model_path):
+        logger.info("Loading Model From Weights")
         model = load_from_weights(model, args.pretrained_model_path, logger)
 
     # dataset
